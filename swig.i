@@ -1,7 +1,7 @@
 %module seekgzip
 
 %{
-#include "export.h"
+#include "export_cpp.h"
 %}
 
 %include "std_string.i"
@@ -21,4 +21,4 @@
     }
 }
 
-%include "export.h"
+%include "export_cpp.h"

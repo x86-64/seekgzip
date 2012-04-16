@@ -1,7 +1,7 @@
 #include <string>
 #include <stdexcept>
 #include "seekgzip.h"
-#include "export.h"
+#include "export_cpp.h"
 
 static std::string error_string(int errorcode)
 {

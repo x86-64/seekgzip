@@ -16,7 +16,7 @@ seekgzip_module = Extension(
     '_seekgzip',
     sources = [
         'seekgzip.c',
-        'export.cpp',
+        'export_cpp.cpp',
         'export_python.cpp',
         ],
     libraries=['z'],

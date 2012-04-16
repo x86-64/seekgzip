@@ -16,5 +16,5 @@ clean-python:
 seekgzip: seekgzip.c
 	$(CC) $(CFLAGS) -o $@ -DBUILD_UTILITY $<
 
-$(PYTHON_TARGETS): export.h export.i
-	swig -c++ -python -o export_python.cpp export.i
+$(PYTHON_TARGETS): export_cpp.h swig.i
+	swig -c++ -python -o export_python.cpp swig.i
