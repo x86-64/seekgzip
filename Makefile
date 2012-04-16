@@ -1,20 +1,34 @@
 CC=gcc
-CFLAGS=-O3 -lz
-TARGETS=seekgzip
-PYTHON_TARGETS=export_python.cpp seekgzip.py
+SWIG=swig
+PYTHON=python
+
+LDFLAGS=-lz
+
+USR_BIN_TARGETS=seekgzip
+USR_LIB_TARGETS=libseekgzip.so
+PHONY_TARGETS=.python
+
+TARGETS=$(USR_BIN_TARGETS) $(USR_LIB_TARGETS) $(PHONY_TARGETS)
 
 all: $(TARGETS)
-
 clean:
-	rm $(TARGETS)
-
-python: $(PYTHON_TARGETS)
-
-clean-python:
-	rm $(PYTHON_TARGETS)
+	rm -rf $(TARGETS)
+	rm -rf export_python.cpp
+	
+install:
+	mkdir -p $(DESTDIR)/usr/bin/ $(DESTDIR)/usr/lib/
+	cp $(USR_BIN_TARGETS) $(DESTDIR)/usr/bin/
+	cp $(USR_LIB_TARGETS) $(DESTDIR)/usr/lib/
+	$(PYTHON) setup.py install
 
 seekgzip: seekgzip.c
-	$(CC) $(CFLAGS) -o $@ -DBUILD_UTILITY $<
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ -DBUILD_UTILITY $<
 
-$(PYTHON_TARGETS): export_cpp.h swig.i
-	swig -c++ -python -o export_python.cpp swig.i
+libseekgzip.so: seekgzip.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -fPIC -shared -o $@ $<
+
+.python: swig.i export_cpp.h export_cpp.cpp setup.py
+	$(SWIG) -c++ -python -o export_python.cpp swig.i
+	$(PYTHON) setup.py build
+	touch $@
+
