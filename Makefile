@@ -23,8 +23,8 @@ install:
 	cp $(USR_INC_TARGETS) $(DESTDIR)/usr/include/seekgzip/
 	test -f .python && $(PYTHON) setup.py install || exit 0
 
-seekgzip: seekgzip.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ -DBUILD_UTILITY $<
+seekgzip: seekgzip.c main.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ seekgzip.c main.c
 
 libseekgzip.so: seekgzip.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -fPIC -shared -o $@ $<
