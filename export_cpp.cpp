@@ -31,9 +31,9 @@ static std::string error_string(int errorcode)
 reader::reader(const char *filename)
 {
     int err = 0;
-    seekgzip_t* sgz = seekgzip_open(filename, &err);
+    seekgzip_t* sgz = seekgzip_open(filename, 0);
     m_obj = sgz;
-    if (sgz == NULL) {
+    if ( (err = seekgzip_error(sgz)) != SEEKGZIP_SUCCESS){
         throw std::invalid_argument(error_string(err));
     }
 }

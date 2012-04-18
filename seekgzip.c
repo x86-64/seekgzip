@@ -531,16 +531,14 @@ error_exit:
 	return ret;
 }
 
-seekgzip_t* seekgzip_open(const char *target, int *errorcode)
+seekgzip_t* seekgzip_open(const char *target, int flags)
 {
 	int i, ret = SEEKGZIP_SUCCESS;
 	gzFile gz = NULL;
 	seekgzip_t *sz;
 	
-	if( (sz = (seekgzip_t *)malloc(sizeof(seekgzip_t))) == NULL){
-	ret = SEEKGZIP_OUTOFMEMORY;
-		goto error_exit;
-	}
+	if( (sz = (seekgzip_t *)malloc(sizeof(seekgzip_t))) == NULL)
+		return NULL;
 	
 	sz->offset = 0;
 	sz->errorcode = 0;
@@ -549,46 +547,39 @@ seekgzip_t* seekgzip_open(const char *target, int *errorcode)
 	// Open the target gzip file for reading.
 	sz->fp = fopen(target, "rb");
 	if (sz->fp == NULL) {
-		ret = SEEKGZIP_OPENERROR;
+		sz->errorcode = SEEKGZIP_OPENERROR;
 		goto error_exit;
 	}
 
 	// Prepare the name for the index file.
 	sz->path_index = get_index_file(target);
 	if (sz->path_index == NULL) {
-		ret = SEEKGZIP_OUTOFMEMORY;
+		sz->errorcode = SEEKGZIP_OUTOFMEMORY;
 		goto error_exit;
 	}
 
 	// Load index
-	ret = seekgzip_index_load(sz);
+	sz->errorcode = seekgzip_index_load(sz);
 	switch(ret){
-	case SEEKGZIP_OPENERROR:
-	case SEEKGZIP_IMCOMPATIBLE:
-		// build index and save it
+		case SEEKGZIP_SUCCESS:
+			break;
+		case SEEKGZIP_OPENERROR:
+		case SEEKGZIP_IMCOMPATIBLE:
+			// build index and save it
 
-		ret = seekgzip_index_build(sz);
-		if( ret == SEEKGZIP_SUCCESS ){
-			seekgzip_index_save(sz); // return value is not important, maybe we cannot write to file, so
-						 // we rebuild index on every program start. (should be warning somehow shown)
-		}
-		break;
-	case SEEKGZIP_SUCCESS:
-		break;
+			sz->errorcode = seekgzip_index_build(sz);
+			if( sz->errorcode == SEEKGZIP_SUCCESS ){
+				seekgzip_index_save(sz); // return value is not important, maybe we cannot write to file, so
+							 // we rebuild index on every program start. (should be warning somehow shown)
+			}
+			break;
 
-	default:
-		goto error_exit;
+		default:
+			goto error_exit;
 	}
 
-	if (errorcode != NULL)
-		*errorcode = ret;
-	return sz;
-
 error_exit:
-	seekgzip_close(sz);
-	if (errorcode != NULL)
-		*errorcode = ret;
-	return NULL;
+	return sz;
 }
 
 void seekgzip_close(seekgzip_t* sz)
@@ -629,5 +620,8 @@ int seekgzip_read(seekgzip_t* sz, void *buffer, int size)
 
 int seekgzip_error(seekgzip_t* sz)
 {
+	if(sz == NULL)
+		return SEEKGZIP_OUTOFMEMORY;
+	
 	return sz->errorcode;
 }

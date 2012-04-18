@@ -18,7 +18,7 @@ enum {
 seekgzip_t*
 seekgzip_open(
 	const char *filename,
-	int *errorcode
+	int flags
 	);
 
 void

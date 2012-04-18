@@ -66,13 +66,13 @@ int main(int argc, char *argv[])
 
 	} else if (strcmp(argv[1], "-b") == 0) {
 		const char *target = argv[2];
-
+		
 		printf("Building an index: %s.idx\n", target);
 		printf("Filesize up to: %d bit\n", (int)sizeof(off_t) * 8);
 		printf("WARNING: if program fail to write index to file, it would silently ignore that\n");
 
-		seekgzip_t* zs = seekgzip_open(target, &ret);
-		if (zs == NULL) {
+		seekgzip_t* zs = seekgzip_open(target, 0);
+		if ((ret = seekgzip_error(zs)) != SEEKGZIP_SUCCESS) {
 			seekgzip_perror(ret);
 			return 1;
 		}
@@ -82,8 +82,8 @@ int main(int argc, char *argv[])
 	} else {
 		char *arg = argv[2], *p = NULL;
 		off_t begin = 0, end = (off_t)-1;
-		seekgzip_t* zs = seekgzip_open(argv[1], NULL);
-		if (zs == NULL) {
+		seekgzip_t* zs = seekgzip_open(argv[1], 0);
+		if (zs == NULL || seekgzip_error(zs) != SEEKGZIP_SUCCESS) {
 			fprintf(stderr, "ERROR: Failed to open the index file.\n");
 			return 1;
 		}
