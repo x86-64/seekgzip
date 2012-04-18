@@ -245,7 +245,7 @@ static int build_index(FILE *in, off_t span, struct access **built)
 
     /* clean up and return index (release unused entries in list) */
     (void)inflateEnd(&strm);
-    index = (struct access*)realloc(index, sizeof(struct point) * index->nelements);
+    index->list = (struct point*)realloc(index->list, sizeof(struct point) * index->nelements);
     index->allocated = index->nelements;
     *built = index;
     return index->allocated;
