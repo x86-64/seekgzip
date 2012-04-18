@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <string.h>
 #include <zlib.h>
+#include <utime.h>
+#include <sys/stat.h>
 #include "seekgzip.h"
 
 #define SEEKGZIP_OPTIMIZATION
@@ -376,6 +378,7 @@ static int extract(FILE *in, struct access *index, off_t offset,
 /*===== End of the portion of zran.c ===== }}}*/
 
 struct tag_seekgzip {
+	char                  *path_data;
 	char                  *path_index;
 	FILE                  *fp;
 	struct access         *index;
@@ -430,6 +433,37 @@ int seekgzip_index_alloc(seekgzip_t *sz){
 	return SEEKGZIP_SUCCESS;
 }
 
+int seekgzip_index_checkutime(seekgzip_t *sz){
+	int                    ret;
+	struct stat            stats_data;
+	struct stat            stats_index;
+	
+	if( (ret = stat(sz->path_data, &stats_data)) != 0)
+		return ret;
+	if( (ret = stat(sz->path_index, &stats_index)) != 0)
+		return ret;
+	
+	return (stats_data.st_mtime == stats_index.st_mtime) ?
+		0 : 1;
+}
+
+int seekgzip_index_setutime(seekgzip_t *sz){
+	int                    ret;
+	struct stat            stats;
+	struct utimbuf         times;
+	
+	if( (ret = stat(sz->path_data, &stats)) != 0)
+		return ret;
+	
+	times.actime  = stats.st_atime;
+	times.modtime = stats.st_mtime;
+	
+	if( (ret = utime(sz->path_index, &times)) != 0)
+		return ret;
+	
+	return 0;
+}
+
 int seekgzip_index_build(seekgzip_t *sz)
 {
 	int len, ret = SEEKGZIP_SUCCESS;
@@ -455,7 +489,8 @@ int seekgzip_index_build(seekgzip_t *sz)
 }
 
 int seekgzip_index_save(seekgzip_t *sz){
-	int i, ret = SEEKGZIP_SUCCESS;
+	int ret = SEEKGZIP_SUCCESS;
+	unsigned int i;
 	gzFile gz;
 
 	// Open the index file for writing.
@@ -477,15 +512,28 @@ int seekgzip_index_save(seekgzip_t *sz){
 	}
 
 	gzclose(gz);
+	
+	seekgzip_index_setutime(sz);
 	return ret;
 }
 
 int seekgzip_index_load(seekgzip_t *sz){
-	int i, ret = SEEKGZIP_SUCCESS;
+	int ret = SEEKGZIP_SUCCESS;
+	unsigned int i;
 	gzFile gz;
 	
 	if( (ret = seekgzip_index_alloc(sz)) != SEEKGZIP_SUCCESS)
 		return ret;
+	
+	// Check index mod time
+	switch( (ret = seekgzip_index_checkutime(sz)) ){
+		case 0: // match
+			break;
+		case 1: // not match
+			return SEEKGZIP_EXPIREDINDEX;
+		default:
+			return SEEKGZIP_OPENERROR;
+	}
 
 	// Open the index file for reading.
 	gz = gzopen(sz->path_index, "rb");
@@ -495,7 +543,7 @@ int seekgzip_index_load(seekgzip_t *sz){
 	// Read the magic string.
 	if (gzgetc(gz) != 'Z' || gzgetc(gz) != 'S' || gzgetc(gz) != 'E' || gzgetc(gz) != 'K'){
 		ret = SEEKGZIP_IMCOMPATIBLE;
-	goto error_exit;
+		goto error_exit;
 	}
 
 	// Check the size of off_t.
@@ -533,8 +581,6 @@ error_exit:
 
 seekgzip_t* seekgzip_open(const char *target, int flags)
 {
-	int i, ret = SEEKGZIP_SUCCESS;
-	gzFile gz = NULL;
 	seekgzip_t *sz;
 	
 	if( (sz = (seekgzip_t *)malloc(sizeof(seekgzip_t))) == NULL)
@@ -550,6 +596,11 @@ seekgzip_t* seekgzip_open(const char *target, int flags)
 		sz->errorcode = SEEKGZIP_OPENERROR;
 		goto error_exit;
 	}
+	
+	if( (sz->path_data = strdup(target)) == NULL){
+		sz->errorcode = SEEKGZIP_OUTOFMEMORY;
+		goto error_exit;
+	}
 
 	// Prepare the name for the index file.
 	sz->path_index = get_index_file(target);
@@ -560,11 +611,12 @@ seekgzip_t* seekgzip_open(const char *target, int flags)
 
 	// Load index
 	sz->errorcode = seekgzip_index_load(sz);
-	switch(ret){
+	switch(sz->errorcode){
 		case SEEKGZIP_SUCCESS:
 			break;
 		case SEEKGZIP_OPENERROR:
 		case SEEKGZIP_IMCOMPATIBLE:
+		case SEEKGZIP_EXPIREDINDEX:
 			// build index and save it
 
 			sz->errorcode = seekgzip_index_build(sz);
@@ -594,7 +646,11 @@ void seekgzip_close(seekgzip_t* sz)
 	}
 	if (sz->path_index != NULL){
 		free(sz->path_index);
-		sz->path_index == NULL;
+		sz->path_index = NULL;
+	}
+	if (sz->path_data != NULL){
+		free(sz->path_data);
+		sz->path_data = NULL;
 	}
 	free(sz);
 }
