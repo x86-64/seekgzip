@@ -18,8 +18,10 @@ streams.
 
 
 * HOW TO BUILD THE UTILITY
-$ make
+$ make all
 
+* HOW TO INSTALL THE UTILITY
+$ make install
 
 * HOW TO USE THE UTILITY
 
@@ -29,15 +31,9 @@ This builds an index file for the specified gzip file ${FILE}. This
 utility creates an index file ${FILE}.idx
 
 (2) Reading the data in the specified range
-$ seekgzip <FILE> [BEGIN:END]
+$ seekgzip <FILE> [BEGIN-END]
 This reads the data in the gzip file ${FILE} from the offset ${BEGIN}
 to ${END}, and outputs the data to STDOUT.
-
-
-* HOW TO BUILD PYTHON MODULE
-$ make python
-$ python setup.py --build_ext
-$ python setup.py install
 
 
 * COPYRIGHT AND LICENSING INFORMATION
