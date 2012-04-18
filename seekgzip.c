@@ -24,6 +24,12 @@
 
 #define SEEKGZIP_OPTIMIZATION
 
+#define __HALF_MAX_SIGNED(type) ((type)1 << (sizeof(type)*8-2))
+#define __MAX_SIGNED(type) (__HALF_MAX_SIGNED(type) - 1 + __HALF_MAX_SIGNED(type))
+#define __MIN_SIGNED(type) (-1 - __MAX_SIGNED(type))
+#define __MIN(type) ((type)-1 < 1?__MIN_SIGNED(type):(type)0)
+#define __MAX(type) ((type)~__MIN(type))
+
 int  seekgzip_index_alloc(seekgzip_t *sz);
 void seekgzip_index_free(seekgzip_t *sz);
 
@@ -92,8 +98,8 @@ struct point {
 
 /* access point list */
 struct access {
-	unsigned int nelements;		   /* number of list entries filled in */
-	unsigned int allocated;		   /* number of list entries allocated */
+	uintmax_t nelements;		   /* number of list entries filled in */
+	uintmax_t allocated;		   /* number of list entries allocated */
 	struct point *list; /* allocated list */
 };
 
@@ -490,7 +496,7 @@ int seekgzip_index_build(seekgzip_t *sz)
 
 int seekgzip_index_save(seekgzip_t *sz){
 	int ret = SEEKGZIP_SUCCESS;
-	unsigned int i;
+	uintmax_t i;
 	gzFile gz;
 
 	// Open the index file for writing.
@@ -519,7 +525,7 @@ int seekgzip_index_save(seekgzip_t *sz){
 
 int seekgzip_index_load(seekgzip_t *sz){
 	int ret = SEEKGZIP_SUCCESS;
-	unsigned int i;
+	uintmax_t i;
 	gzFile gz;
 	
 	if( (ret = seekgzip_index_alloc(sz)) != SEEKGZIP_SUCCESS)
@@ -554,6 +560,10 @@ int seekgzip_index_load(seekgzip_t *sz){
 
 	// Read the number of entry points.
 	sz->index->nelements = sz->index->allocated = read_uint32(gz);
+	if(__MAX(uintmax_t) / sizeof(struct point) <= sz->index->nelements){
+		ret = SEEKGZIP_IMCOMPATIBLE;
+		goto error_exit;
+	}
 
 	// Allocate an array for entry points.
 	sz->index->list = (struct point*)malloc(sizeof(struct point) * sz->index->nelements);
