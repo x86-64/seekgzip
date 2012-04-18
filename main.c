@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
         printf("    %s -b <FILE>\n", argv[0]);
         printf("        Build an index file \"$FILE.idx\" for the gzip file $FILE.\n");
         printf("    %s <FILE> [BEGIN-END]\n", argv[0]);
-        printf("        Output the content of the gzip file $FILE of offset range [BEGIN:END).\n");
+        printf("        Output the content of the gzip file $FILE of offset range [BEGIN-END].\n");
         return 0;
 
     } else if (strcmp(argv[1], "-b") == 0) {
@@ -69,13 +69,15 @@ int main(int argc, char *argv[])
 
         printf("Building an index: %s.idx\n", target);
         printf("Filesize up to: %d bit\n", (int)sizeof(off_t) * 8);
+        printf("WARNING: if program fail to write index to file, it would silently ignore that\n");
 
-        ret = seekgzip_build(target);
-        if (ret != 0) {
+        seekgzip_t* zs = seekgzip_open(target, &ret);
+        if (zs == NULL) {
             seekgzip_perror(ret);
             return 1;
         }
-        return 0;
+        seekgzip_close(zs);
+	return 0;
 
     } else {
         char *arg = argv[2], *p = NULL;
@@ -113,8 +115,10 @@ int main(int argc, char *argv[])
             }
             read = seekgzip_read(zs, buffer, (int)size);
             if (0 < read) {
-                fwrite(buffer, read, sizeof(char), stdout);
                 begin += read;
+                
+		if(fwrite(buffer, read, sizeof(char), stdout) == 0)
+			continue;
             } else if (read == 0) {
                 break;
             } else {

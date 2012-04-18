@@ -22,6 +22,9 @@
 
 #define SEEKGZIP_OPTIMIZATION
 
+int  seekgzip_index_alloc(seekgzip_t *sz);
+void seekgzip_index_free(seekgzip_t *sz);
+
 /*===== Begin of the portion of zran.c ===== {{{*/
 
 /* zran.c -- example of zlib/gzip stream indexing and random access
@@ -87,19 +90,10 @@ struct point {
 
 /* access point list */
 struct access {
-    int have;           /* number of list entries filled in */
-    int size;           /* number of list entries allocated */
+    unsigned int nelements;           /* number of list entries filled in */
+    unsigned int allocated;           /* number of list entries allocated */
     struct point *list; /* allocated list */
 };
-
-/* Deallocate an index built by build_index() */
-static void free_index(struct access *index)
-{
-    if (index != NULL) {
-        free(index->list);
-        free(index);
-    }
-}
 
 /* Add an entry to the access point list.  If out of memory, deallocate the
    existing list and return NULL. */
@@ -108,32 +102,17 @@ static struct access *addpoint(struct access *index, int bits,
 {
     struct point *next;
 
-    /* if list is empty, create it (start with eight points) */
-    if (index == NULL) {
-        index = (struct access*)malloc(sizeof(struct access));
-        if (index == NULL) return NULL;
-        index->list = (struct point*)malloc(sizeof(struct point) << 3);
-        if (index->list == NULL) {
-            free(index);
-            return NULL;
-        }
-        index->size = 8;
-        index->have = 0;
-    }
-
     /* if list is full, make it bigger */
-    else if (index->have == index->size) {
-        index->size <<= 1;
-        next = (struct point*)realloc(index->list, sizeof(struct point) * index->size);
-        if (next == NULL) {
-            free_index(index);
-            return NULL;
-        }
-        index->list = next;
+    if (index->nelements == index->allocated) {
+        index->allocated = index->allocated != 0 ? index->allocated : 1; 
+	index->allocated <<= 1;
+        index->list = (struct point*)realloc(index->list, sizeof(struct point) * index->allocated);
+        if (index->list == NULL)
+		return NULL;
     }
 
     /* fill in entry and increment how many we have */
-    next = index->list + index->have;
+    next = index->list + index->nelements;
     next->bits = bits;
     next->in = in;
     next->out = out;
@@ -141,7 +120,7 @@ static struct access *addpoint(struct access *index, int bits,
         memcpy(next->window, window + WINSIZE - left, left);
     if (left < WINSIZE)
         memcpy(next->window + left, window, WINSIZE - left);
-    index->have++;
+    index->nelements++;
 
     /* return list, possibly reallocated */
     return index;
@@ -150,7 +129,7 @@ static struct access *addpoint(struct access *index, int bits,
 #ifdef  SEEKGZIP_OPTIMIZATION
 struct point *findpoint(struct access *index, off_t offset)
 {
-    int half, len = index->have;
+    int half, len = index->nelements;
     struct point *first = &index->list[0], *middle;
 
     /* equivalent to std::upper_bound() */
@@ -183,7 +162,7 @@ static int build_index(FILE *in, off_t span, struct access **built)
     int ret;
     off_t totin, totout;        /* our own total counters to avoid 4GB limit */
     off_t last;                 /* totout value of last access point */
-    struct access *index;       /* access points being generated */
+    struct access *index = *built; /* access points being generated */
     z_stream strm;
     unsigned char input[CHUNK];
     unsigned char window[WINSIZE];
@@ -197,12 +176,15 @@ static int build_index(FILE *in, off_t span, struct access **built)
     ret = inflateInit2(&strm, 47);      /* automatic zlib or gzip decoding */
     if (ret != Z_OK)
         return ret;
+    
+    // Rewind to beginning  of file
+    if( (ret = fseeko(in, 0, SEEK_SET)) == -1)
+    	goto build_index_error;
 
     /* inflate the input, maintain a sliding window, and build an index -- this
        also validates the integrity of the compressed data using the check
        information at the end of the gzip or zlib stream */
     totin = totout = last = 0;
-    index = NULL;               /* will be allocated by first addpoint() */
     strm.avail_out = 0;
     do {
         /* get some compressed data from input file */
@@ -263,16 +245,14 @@ static int build_index(FILE *in, off_t span, struct access **built)
 
     /* clean up and return index (release unused entries in list) */
     (void)inflateEnd(&strm);
-    index = (struct access*)realloc(index, sizeof(struct point) * index->have);
-    index->size = index->have;
+    index = (struct access*)realloc(index, sizeof(struct point) * index->nelements);
+    index->allocated = index->nelements;
     *built = index;
-    return index->size;
+    return index->allocated;
 
     /* return error */
   build_index_error:
     (void)inflateEnd(&strm);
-    if (index != NULL)
-        free_index(index);
     return ret;
 }
 
@@ -305,7 +285,7 @@ static int extract(FILE *in, struct access *index, off_t offset,
     }
 #else
     here = index->list;
-    ret = index->have;
+    ret = index->nelements;
     while (--ret && here[1].out <= offset)
         here++;
 #endif/*SEEKGZIP_OPTIMIZATION*/
@@ -396,8 +376,9 @@ static int extract(FILE *in, struct access *index, off_t offset,
 /*===== End of the portion of zran.c ===== }}}*/
 
 struct tag_seekgzip {
+    char                      *path_index;
     FILE                      *fp;
-    struct access              index;
+    struct access             *index;
     off_t                      offset;
     int                        errorcode;
 };
@@ -425,23 +406,36 @@ static uint32_t read_uint32(gzFile gz)
     return v;
 }
 
-int seekgzip_build(const char *target)
-{
-    int i, len, ret = SEEKGZIP_SUCCESS;
-    FILE *fp = NULL;
-    struct access *index = NULL;
-    char *target_idx = NULL;
-    gzFile gz = NULL;
+void seekgzip_index_free(seekgzip_t *sz){
+	if(sz->index == NULL)
+		return;
+	
+	if(sz->index->list != NULL)
+		free(sz->index->list);
+	
+	free(sz->index);
+	sz->index = NULL;
+}
 
-    // Open the target gzip file.
-    fp = fopen(target, "rb");
-    if (fp == NULL) {
-        ret = SEEKGZIP_OPENERROR;
-        goto force_exit;
-    }
+int seekgzip_index_alloc(seekgzip_t *sz){
+	if(sz->index != NULL)
+		seekgzip_index_free(sz);
+	
+	if( (sz->index = (struct access *)malloc(sizeof(struct access))) == NULL)
+		return SEEKGZIP_OUTOFMEMORY;
+	
+	sz->index->nelements = 0;
+	sz->index->allocated = 0;
+	sz->index->list      = NULL;
+	return SEEKGZIP_SUCCESS;
+}
+
+int seekgzip_index_build(seekgzip_t *sz)
+{
+    int len, ret = SEEKGZIP_SUCCESS;
 
     // Build an index for the file.
-    len = build_index(fp, SPAN, &index);
+    len = build_index(sz->fp, SPAN, &sz->index);
     if (len < 0) {
         switch (len) {
         case Z_MEM_ERROR:
@@ -453,93 +447,56 @@ int seekgzip_build(const char *target)
         default:
             ret = SEEKGZIP_ERROR;
         }
-        goto force_exit;
+	
+	// invalid index, so - free it
+	seekgzip_index_free(sz);
     }
+    return ret;
+}
 
-    // Close the target file.
-    fclose(fp);
-    fp = NULL;
-
-    // Prepare the name for the index file.
-    target_idx = get_index_file(target);
-    if (target_idx == NULL) {
-        ret = SEEKGZIP_OUTOFMEMORY;
-        goto force_exit;
-    }
+int seekgzip_index_save(seekgzip_t *sz){
+    int i, ret = SEEKGZIP_SUCCESS;
+    gzFile gz;
 
     // Open the index file for writing.
-    gz = gzopen(target_idx, "wb");
-    if (gz == NULL) {
-        ret = SEEKGZIP_OPENERROR;
-        goto force_exit;
-    }
+    gz = gzopen(sz->path_index, "wb");
+    if (gz == NULL)
+    	return SEEKGZIP_OPENERROR;
 
     // Write a header.
     gzwrite(gz, "ZSEK", 4);
     write_uint32(gz, (uint32_t)sizeof(off_t));
-    write_uint32(gz, (uint32_t)index->have);
+    write_uint32(gz, (uint32_t)sz->index->nelements);
 
     // Write out entry points.
-    for (i = 0;i < index->have;++i) {
-        gzwrite(gz, &index->list[i].out, sizeof(off_t));
-        gzwrite(gz, &index->list[i].in, sizeof(off_t));
-        gzwrite(gz, &index->list[i].bits, sizeof(int));
-        gzwrite(gz, index->list[i].window, WINSIZE);
+    for (i = 0;i < sz->index->nelements;++i) {
+        gzwrite(gz, &sz->index->list[i].out, sizeof(off_t));
+        gzwrite(gz, &sz->index->list[i].in, sizeof(off_t));
+        gzwrite(gz, &sz->index->list[i].bits, sizeof(int));
+        gzwrite(gz, sz->index->list[i].window, WINSIZE);
     }
 
-force_exit:
-    if (gz != NULL) {
-        gzclose(gz);
-    }
-    if (target_idx != NULL) {
-        free(target_idx);
-    }
-    if (index != NULL) {
-        free_index(index);
-    }
-    if (fp != NULL) {
-        fclose(fp);
-    }
-
+    gzclose(gz);
     return ret;
 }
 
-seekgzip_t* seekgzip_open(const char *target, int *errorcode)
-{
+int seekgzip_index_load(seekgzip_t *sz){
     int i, ret = SEEKGZIP_SUCCESS;
-    FILE *fp = NULL;
-    gzFile gz = NULL;
-    char *target_idx = NULL;
-    seekgzip_t *zs = NULL;
-
-    // Open the target gzip file for reading.
-    fp = fopen(target, "rb");
-    if (fp == NULL) {
-        ret = SEEKGZIP_OPENERROR;
-        goto error_exit;
-    }
-
-    // Prepare the name for the index file.
-    target_idx = get_index_file(target);
-    if (target_idx == NULL) {
-        ret = SEEKGZIP_OUTOFMEMORY;
-        goto error_exit;
-    }
+    gzFile gz;
+    
+    if( (ret = seekgzip_index_alloc(sz)) != SEEKGZIP_SUCCESS)
+    	return ret;
 
     // Open the index file for reading.
-    gz = gzopen(target_idx, "rb");
-    if (gz == NULL) {
-        ret = SEEKGZIP_OPENERROR;
-        goto error_exit;
-    }
+    gz = gzopen(sz->path_index, "rb");
+    if (gz == NULL)
+    	return SEEKGZIP_OPENERROR;
 
     // Read the magic string.
-    ret = SEEKGZIP_IMCOMPATIBLE;
-    if (gzgetc(gz) != 'Z') goto error_exit;
-    if (gzgetc(gz) != 'S') goto error_exit;
-    if (gzgetc(gz) != 'E') goto error_exit;
-    if (gzgetc(gz) != 'K') goto error_exit;
-    ret = SEEKGZIP_SUCCESS;
+    if (gzgetc(gz) != 'Z' || gzgetc(gz) != 'S' || gzgetc(gz) != 'E' || gzgetc(gz) != 'K'){
+    	ret = SEEKGZIP_IMCOMPATIBLE;
+	goto error_exit;
+    }
 
     // Check the size of off_t.
     if (read_uint32(gz) != sizeof(off_t)) {
@@ -547,105 +504,130 @@ seekgzip_t* seekgzip_open(const char *target, int *errorcode)
         goto error_exit;
     }
 
-    // Allocate a seekgzip_t instance.
-    zs = (seekgzip_t*)malloc(sizeof(seekgzip_t));
-    if (zs == NULL) {
-        ret = SEEKGZIP_OUTOFMEMORY;
-        goto error_exit;
-    }
-    memset(zs, 0, sizeof(*zs));
-
     // Read the number of entry points.
-    zs->index.have = zs->index.size = read_uint32(gz);
+    sz->index->nelements = sz->index->allocated = read_uint32(gz);
 
     // Allocate an array for entry points.
-    zs->index.list = (struct point*)malloc(sizeof(struct point) * zs->index.have);
-    if (zs->index.list == NULL) {
+    sz->index->list = (struct point*)malloc(sizeof(struct point) * sz->index->nelements);
+    if (sz->index->list == NULL) {
         ret = SEEKGZIP_OUTOFMEMORY;
         goto error_exit;
     }
 
     // Read entry points.
-    for (i = 0;i < zs->index.have;++i) {
-        gzread(gz, &zs->index.list[i].out, sizeof(off_t));
-        gzread(gz, &zs->index.list[i].in, sizeof(off_t));
-        gzread(gz, &zs->index.list[i].bits, sizeof(int));
-        gzread(gz, zs->index.list[i].window, WINSIZE);
+    for (i = 0; i < sz->index->nelements; ++i) {
+        gzread(gz, &sz->index->list[i].out, sizeof(off_t));
+        gzread(gz, &sz->index->list[i].in, sizeof(off_t));
+        gzread(gz, &sz->index->list[i].bits, sizeof(int));
+        gzread(gz, sz->index->list[i].window, WINSIZE);
     }
 
+error_exit:
     // Close the index filiiiie.
     if (gzclose(gz) != 0) {
         ret = SEEKGZIP_ZLIBERROR;
         goto error_exit;
     }
+    return ret;
+}
 
-    free(target_idx);
-
-    zs->fp = fp;
-    zs->offset = 0;
-    zs->errorcode = 0;
-
-    if (errorcode != NULL) {
-        *errorcode = 0;
+seekgzip_t* seekgzip_open(const char *target, int *errorcode)
+{
+    int i, ret = SEEKGZIP_SUCCESS;
+    gzFile gz = NULL;
+    seekgzip_t *sz;
+    
+    if( (sz = (seekgzip_t *)malloc(sizeof(seekgzip_t))) == NULL){
+	ret = SEEKGZIP_OUTOFMEMORY;
+    	goto error_exit;
     }
-    return zs;
+    
+    sz->offset = 0;
+    sz->errorcode = 0;
+    sz->index = NULL;
+
+    // Open the target gzip file for reading.
+    sz->fp = fopen(target, "rb");
+    if (sz->fp == NULL) {
+        ret = SEEKGZIP_OPENERROR;
+        goto error_exit;
+    }
+
+    // Prepare the name for the index file.
+    sz->path_index = get_index_file(target);
+    if (sz->path_index == NULL) {
+        ret = SEEKGZIP_OUTOFMEMORY;
+        goto error_exit;
+    }
+
+    // Load index
+    ret = seekgzip_index_load(sz);
+    switch(ret){
+	case SEEKGZIP_OPENERROR:
+	case SEEKGZIP_IMCOMPATIBLE:
+		// build index and save it
+
+		ret = seekgzip_index_build(sz);
+		if( ret == SEEKGZIP_SUCCESS ){
+			seekgzip_index_save(sz); // return value is not important, maybe we cannot write to file, so
+						 // we rebuild index on every program start. (should be warning somehow shown)
+		}
+		break;
+	case SEEKGZIP_SUCCESS:
+		break;
+
+	default:
+		goto error_exit;
+    }
+
+    if (errorcode != NULL)
+        *errorcode = ret;
+    return sz;
 
 error_exit:
-    if (zs != NULL) {
-        if (zs->index.list != NULL) {
-            free(zs->index.list);
-        }
-        free(zs);
-    }
-    if (gz != NULL) {
-        gzclose(gz);
-    }
-    if (target_idx != NULL) {
-        free(target_idx);
-    }
-    if (fp != NULL) {
-        fclose(fp);
-    }
-
-    if (errorcode != NULL) {
+    seekgzip_close(sz);
+    if (errorcode != NULL)
         *errorcode = ret;
-    }
     return NULL;
 }
 
-void seekgzip_close(seekgzip_t* zs)
+void seekgzip_close(seekgzip_t* sz)
 {
-    if (zs != NULL) {
-        if (zs->fp != NULL) {
-            fclose(zs->fp);
-        }
-        if (zs->index.list != NULL) {
-            free(zs->index.list);
-        }
-        free(zs);
-    }
+	if (sz == NULL)
+		return;
+	
+	seekgzip_index_free(sz);
+	if (sz->fp != NULL){
+		fclose(sz->fp);
+		sz->fp = NULL;
+	}
+	if (sz->path_index != NULL){
+		free(sz->path_index);
+		sz->path_index == NULL;
+	}
+	free(sz);
 }
 
-void seekgzip_seek(seekgzip_t *zs, off_t offset)
+void seekgzip_seek(seekgzip_t *sz, off_t offset)
 {
-    zs->offset = offset;
+    sz->offset = offset;
 }
 
-off_t seekgzip_tell(seekgzip_t *zs)
+off_t seekgzip_tell(seekgzip_t *sz)
 {
-    return zs->offset;
+    return sz->offset;
 }
 
-int seekgzip_read(seekgzip_t* zs, void *buffer, int size)
+int seekgzip_read(seekgzip_t* sz, void *buffer, int size)
 {
-    int len = extract(zs->fp, &zs->index, zs->offset, (unsigned char*)buffer, size);
+    int len = extract(sz->fp, sz->index, sz->offset, (unsigned char*)buffer, size);
     if (0 < len) {
-        zs->offset += len;
+        sz->offset += len;
     }
     return len;
 }
 
-int seekgzip_error(seekgzip_t* sgz)
+int seekgzip_error(seekgzip_t* sz)
 {
-    return sgz->errorcode;
+    return sz->errorcode;
 }

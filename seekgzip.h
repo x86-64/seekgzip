@@ -1,7 +1,7 @@
 #ifndef __SEEKGZIP_H__
 #define __SEEKGZIP_H__
 
-struct tag_seekgzip_t; typedef struct tag_seekgzip seekgzip_t;
+struct tag_seekgzip; typedef struct tag_seekgzip seekgzip_t;
 
 enum {
     SEEKGZIP_SUCCESS=0,
