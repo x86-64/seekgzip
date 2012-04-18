@@ -15,11 +15,6 @@ enum {
 	SEEKGZIP_ZLIBERROR,
 };
 
-int
-seekgzip_build(
-	const char *filename
-	);
-
 seekgzip_t*
 seekgzip_open(
 	const char *filename,
