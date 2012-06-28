@@ -33,6 +33,17 @@
 int  seekgzip_index_alloc(seekgzip_t *sz);
 void seekgzip_index_free(seekgzip_t *sz);
 
+struct tag_seekgzip {
+	char                  *path_data;
+	char                  *path_index;
+	FILE                  *fp;
+	struct access         *index;
+	off_t                  offset;
+	off_t                  totin;
+	off_t                  totout;
+	int                    errorcode;
+};
+
 /*===== Begin of the portion of zran.c ===== {{{*/
 
 /* zran.c -- example of zlib/gzip stream indexing and random access
@@ -165,7 +176,7 @@ struct point *findpoint(struct access *index, off_t offset)
    returns the number of access points on success (>= 1), Z_MEM_ERROR for out
    of memory, Z_DATA_ERROR for an error in the input file, or Z_ERRNO for a
    file read error.  On success, *built points to the resulting index. */
-static int build_index(FILE *in, off_t span, struct access **built)
+static int build_index(FILE *in, off_t span, struct access **built, seekgzip_t *sz)
 {
 	int ret;
 	off_t totin, totout;		/* our own total counters to avoid 4GB limit */
@@ -256,6 +267,8 @@ static int build_index(FILE *in, off_t span, struct access **built)
 	index->list = (struct point*)realloc(index->list, sizeof(struct point) * index->nelements);
 	index->allocated = index->nelements;
 	*built = index;
+	sz->totin  = totin;
+	sz->totout = totout;
 	return index->allocated;
 
 	/* return error */
@@ -383,15 +396,6 @@ static int extract(FILE *in, struct access *index, off_t offset,
 
 /*===== End of the portion of zran.c ===== }}}*/
 
-struct tag_seekgzip {
-	char                  *path_data;
-	char                  *path_index;
-	FILE                  *fp;
-	struct access         *index;
-	off_t                  offset;
-	int                    errorcode;
-};
-
 static char *get_index_file(const char *target)
 {
 	char *idx = (char*)malloc(strlen(target) + 4 + 1);
@@ -475,7 +479,7 @@ int seekgzip_index_build(seekgzip_t *sz)
 	int len, ret = SEEKGZIP_SUCCESS;
 
 	// Build an index for the file.
-	len = build_index(sz->fp, SPAN, &sz->index);
+	len = build_index(sz->fp, SPAN, &sz->index, sz);
 	if (len < 0) {
 		switch (len) {
 		case Z_MEM_ERROR:
@@ -505,10 +509,12 @@ int seekgzip_index_save(seekgzip_t *sz){
 		return SEEKGZIP_OPENERROR;
 
 	// Write a header.
-	gzwrite(gz, "ZSEK", 4);
+	gzwrite(gz, "ZSE2", 4);
 	write_uint32(gz, (uint32_t)sizeof(off_t));
 	write_uint32(gz, (uint32_t)sz->index->nelements);
-
+	gzwrite(gz, &sz->totin,  sizeof(off_t));
+	gzwrite(gz, &sz->totout, sizeof(off_t));
+	
 	// Write out entry points.
 	for (i = 0;i < sz->index->nelements;++i) {
 		gzwrite(gz, &sz->index->list[i].out, sizeof(off_t));
@@ -547,7 +553,7 @@ int seekgzip_index_load(seekgzip_t *sz){
 		return SEEKGZIP_OPENERROR;
 
 	// Read the magic string.
-	if (gzgetc(gz) != 'Z' || gzgetc(gz) != 'S' || gzgetc(gz) != 'E' || gzgetc(gz) != 'K'){
+	if (gzgetc(gz) != 'Z' || gzgetc(gz) != 'S' || gzgetc(gz) != 'E' || gzgetc(gz) != '2'){
 		ret = SEEKGZIP_IMCOMPATIBLE;
 		goto error_exit;
 	}
@@ -571,7 +577,11 @@ int seekgzip_index_load(seekgzip_t *sz){
 		ret = SEEKGZIP_OUTOFMEMORY;
 		goto error_exit;
 	}
-
+	
+	// Read size of unpacked file
+	gzread(gz, &sz->totin,  sizeof(off_t));
+	gzread(gz, &sz->totout, sizeof(off_t));
+	
 	// Read entry points.
 	for (i = 0; i < sz->index->nelements; ++i) {
 		gzread(gz, &sz->index->list[i].out, sizeof(off_t));
@@ -673,6 +683,16 @@ void seekgzip_seek(seekgzip_t *sz, off_t offset)
 off_t seekgzip_tell(seekgzip_t *sz)
 {
 	return sz->offset;
+}
+
+off_t seekgzip_unpacked_length(seekgzip_t *sz)
+{
+	return sz->totout;
+}
+
+off_t seekgzip_packed_length(seekgzip_t *sz)
+{
+	return sz->totin;
 }
 
 int seekgzip_read(seekgzip_t* sz, void *buffer, int size)

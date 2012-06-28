@@ -50,5 +50,8 @@ seekgzip_error(
 	seekgzip_t* sgz
 	);
 
+off_t seekgzip_unpacked_length(seekgzip_t *sz);
+off_t seekgzip_packed_length(seekgzip_t *sz);
+
 #endif/*__SEEKGZIP_H__*/
 
