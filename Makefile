@@ -17,10 +17,10 @@ clean:
 	rm -rf export_python.cpp
 	
 install:
-	mkdir -p $(DESTDIR)/usr/bin/ $(DESTDIR)/usr/lib/ $(DESTDIR)/usr/include/seekgzip/
-	cp $(USR_BIN_TARGETS) $(DESTDIR)/usr/bin/
-	cp $(USR_LIB_TARGETS) $(DESTDIR)/usr/lib/
-	cp $(USR_INC_TARGETS) $(DESTDIR)/usr/include/seekgzip/
+	mkdir -p $(DESTDIR)/$(EPREFIX)/usr/bin/ $(DESTDIR)/$(EPREFIX)/usr/lib/ $(DESTDIR)/$(EPREFIX)/usr/include/seekgzip/
+	cp $(USR_BIN_TARGETS) $(DESTDIR)/$(EPREFIX)/usr/bin/
+	cp $(USR_LIB_TARGETS) $(DESTDIR)/$(EPREFIX)/usr/lib/
+	cp $(USR_INC_TARGETS) $(DESTDIR)/$(EPREFIX)/usr/include/seekgzip/
 	test -f .python && $(PYTHON) setup.py install || exit 0
 
 seekgzip: seekgzip.c main.c
